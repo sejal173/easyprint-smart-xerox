@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+client/.env
+client/.env.*
+!client/.env.example
+
+# Local storage and data
+server/uploads/
+server/.data/
+server/.redis/
+uploads/
+dump.rdb
+*.log
+
+# Build outputs
+client/dist/
+dist/
+build/
+bin/
+obj/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

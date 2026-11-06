@@ -1,0 +1,16 @@
+{
+  "name": "@easyprint/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./constants": "./src/constants.js",
+    "./pricing": "./src/pricing.js",
+    "./eta": "./src/eta.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
+
