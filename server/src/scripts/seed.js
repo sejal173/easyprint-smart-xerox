@@ -6,40 +6,38 @@ import { User, Shop, ShopQrCode, Order, Counter } from '../models/index.js';
 
 dotenv.config();
 
-async function seed() {
-  try {
-    console.log('[Seed] Connecting to MongoDB...');
-    await connectDB();
+/**
+ * Seeds the demo owner user and shop if not already present.
+ * Idempotent: does NOT overwrite existing password or user records.
+ */
+export async function seedOwnerUser() {
+  const demoEmail = (process.env.OWNER_SEED_EMAIL || 'owner@easyprint.test').toLowerCase().trim();
+  const demoPassword = process.env.OWNER_SEED_PASSWORD;
+  const demoSlug = 'quickcopy-central';
 
-    const demoEmail = 'owner@easyprint.test';
-    const demoPassword = process.env.OWNER_SEED_PASSWORD || 'Owner@123';
-    const demoSlug = 'quickcopy-central';
+  if (!demoPassword) {
+    throw new Error('[Seed Error] Missing OWNER_SEED_PASSWORD environment variable. Set OWNER_SEED_PASSWORD in your environment before seeding.');
+  }
 
-    console.log('[Seed] Cleaning existing demo records...');
-    const existingUsers = await User.find({ email: { $in: [demoEmail, 'rajesh@quickcopy.com'] } });
-    for (const u of existingUsers) {
-      const shops = await Shop.find({ owner: u._id });
-      for (const s of shops) {
-        await ShopQrCode.deleteMany({ shop: s._id });
-        await Order.deleteMany({ shop: s._id });
-        await Counter.deleteMany({ key: new RegExp(`^queue:${s._id}:`) });
-        await Shop.deleteOne({ _id: s._id });
-      }
-      await User.deleteOne({ _id: u._id });
-    }
-
+  let owner = await User.findOne({ email: demoEmail });
+  if (!owner) {
     console.log(`[Seed] Creating Demo Shop Owner (${demoEmail})...`);
     const passwordHash = await bcrypt.hash(demoPassword, 12);
-    const owner = await User.create({
+    owner = await User.create({
       name: 'Rajesh Sharma',
       email: demoEmail,
       passwordHash,
       role: 'owner',
     });
     console.log(`[Seed] Created User: ${owner.name} (${owner.email})`);
+  } else {
+    console.log(`[Seed] User ${owner.email} already exists; preserving existing credentials.`);
+  }
 
+  let shop = await Shop.findOne({ slug: demoSlug });
+  if (!shop) {
     console.log('[Seed] Creating Demo Xerox Shop...');
-    const shop = await Shop.create({
+    shop = await Shop.create({
       owner: owner._id,
       name: 'QuickCopy Smart Xerox & Digital Prints',
       slug: demoSlug,
@@ -100,19 +98,36 @@ async function seed() {
       pngDataUrl,
     });
     console.log(`[Seed] Generated QR Code for: ${publicUrl}`);
+  } else {
+    console.log(`[Seed] Shop "${shop.name}" already exists.`);
+  }
+
+  return { owner, shop };
+}
+
+async function seed() {
+  try {
+    console.log('[Seed] Connecting to MongoDB...');
+    await connectDB();
+    const { owner, shop } = await seedOwnerUser();
+
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const publicUrl = `${clientUrl}/s/${shop.slug}`;
 
     console.log('\n===============================================');
     console.log(' SEEDING COMPLETED SUCCESSFULLY!');
-    console.log(` Demo Owner Login: ${demoEmail}`);
-    console.log(` Demo Owner Password: ${demoPassword}`);
+    console.log(` Demo Owner Login: ${owner.email}`);
+    console.log(' Demo Owner Password: <configured via OWNER_SEED_PASSWORD in .env>');
     console.log(` Demo Shop URL: ${publicUrl}`);
     console.log('===============================================\n');
 
     process.exit(0);
   } catch (err) {
-    console.error('[Seed Error]', err);
+    console.error('[Seed Error]', err.message);
     process.exit(1);
   }
 }
 
-seed();
+if (process.argv[1] && process.argv[1].endsWith('seed.js')) {
+  seed();
+}

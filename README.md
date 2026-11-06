@@ -11,9 +11,9 @@ EasyPrint is a full-stack Xerox and print shop automation platform built with Mo
 - **Phase 3A (Razorpay Payments & Agent Server API):** COMPLETE (Tests: 11/11 passing)
 - **Phase 3B (Windows Agent Tray App & xUnit Suite):** COMPLETE (Tests: 6/6 server, 36/36 xUnit passing)
 - **Phase 4A (Notifications, Analytics, Admin Panel, Retention & Hardening):** COMPLETE (Tests: 12/12 passing)
-- **Phase 4B (Docker Containerization & CI/CD):** PENDING (Final Step)
+- **Phase 4B (Verification, Security Cleanup, Docker & CI/CD):** COMPLETE (Tests: 13/13 passing)
 
-**Total Test Suite Status:** 87 / 87 tests passing across monorepo (100% green).
+**Total Test Suite Status:** 100 / 100 tests passing across monorepo (100% green).
 
 ---
 
@@ -69,9 +69,14 @@ CLIENT_URL=http://localhost:5173
 API_URL=http://localhost:5000
 MONGODB_URI=mongodb://127.0.0.1:27017/easyprint
 REDIS_URL=redis://127.0.0.1:6379
-JWT_SECRET=easyprint_super_secret_jwt_key_2026
-OWNER_SEED_PASSWORD=Owner@123
+JWT_SECRET=<SECURE_RANDOM_JWT_SECRET_32_CHARS>
+OWNER_SEED_EMAIL=owner@example.com
+OWNER_SEED_PASSWORD=<OWNER_SEED_PASSWORD>
 UPLOAD_DIR=./uploads
+
+# Platform Admin Seed Credentials
+ADMIN_SEED_EMAIL=admin@example.com
+ADMIN_SEED_PASSWORD=<ADMIN_SEED_PASSWORD>
 
 # Storage Configuration
 STORAGE_DRIVER=local
@@ -126,9 +131,9 @@ When testing payments in Razorpay test mode:
   - **Financials:** Platform-wide gross payments, refunds, and net revenue retained.
   - **Users & RBAC:** Manage user roles (`owner` <-> `admin`) and suspension flags. Admins cannot demote or suspend themselves (`400 Bad Request`).
   - **Audit Logging:** Every admin mutation writes an immutable `AdminAction` audit trail record.
-- **Default Super-Admin Seed:**
-  - Email: `admin@easyprint.com`
-  - Password: `Admin@EasyPrint2026!`
+- **Platform Super-Admin Seed:**
+  - Email: `admin@example.com` (configured via `ADMIN_SEED_EMAIL`)
+  - Password: `<ADMIN_SEED_PASSWORD>` (configured via `ADMIN_SEED_PASSWORD`)
 
 ### 4. Scheduled File Retention & Worker Separation
 - **Privacy & Storage Retention:** Completed order file bytes are deleted immediately upon completion or after 24h for cancelled/draft orders. Sets `OrderFile.deletedAt` and logs `file_retention_deleted` `OrderEvent`. Signed download URLs for purged files return `410 Gone`. Order records and totals are preserved for accounting.
@@ -145,10 +150,54 @@ When testing payments in Razorpay test mode:
 
 ---
 
-## Running Automated Tests
+## Phase 4B Features Overview
 
-Run the full automated test suite across all four phases and packages:
+### Stage 1: Verification & Security Cleanup
+- **Credential & Default Secret Eradication:** All known default passwords and credentials removed from source and docs. Seed scripts require environment variables (`OWNER_SEED_PASSWORD`, `ADMIN_SEED_PASSWORD`) and are fully idempotent without overwriting existing credentials.
+- **Pre-commit / CI Secret Scanner:** `scripts/check-secrets.sh` (Bash) and `scripts/check-secrets.ps1` (PowerShell) scan all tracked and untracked files for forbidden default credential patterns.
+- **Centralized Environment Validator:** `server/src/config/env.js` uses **Zod** to validate every environment variable at boot, reporting detailed errors for missing or weak configuration.
+- **End-to-End Live Smoke Test Script:** `scripts/smoke/smoke-test.js` tests real database connectivity, Redis, owner login, PDF upload, draft order creation, payment wait/simulation, and Socket.IO events (`job.queued`, `queue.updated`).
+- **Hardware Verification Log:** `docs/verification_log.md` contains the 10-item checklist table for physical and virtual printer verification.
 
+### Stage 2: Containerization & CI/CD Pipeline
+- **Backend Dockerfile (`server/Dockerfile`):** Multi-stage build based on `node:20-alpine`, non-root `node` user, production dependencies only, with integrated `/health` `HEALTHCHECK`.
+- **Frontend Dockerfile & Nginx (`client/Dockerfile` & `client/nginx.conf`):** Multi-stage build producing static Vite assets served via `nginx:alpine` with SPA routing (`try_files $uri $uri/ /index.html;`), reverse proxy for `/api/` and `/socket.io/`, and HTTP security headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`).
+- **Docker Compose Orchestration (`docker-compose.yml`):** Multi-container stack (`mongo`, `redis`, `api`, `worker`, `web`) with volume persistence and health dependency chains. Reads `.env.docker` (configured via `.env.docker.example`).
+- **GitHub Actions CI/CD (`.github/workflows/ci.yml`):** Runs secret verification, shared package tests, backend tests against MongoDB & Redis services, client build, .NET 8 agent tests on Windows runner, and Docker build checks with npm and NuGet caching.
+- **Deployment Guide (`docs/deployment.md`):** Complete operations guide detailing local Docker deployment, cloud topologies (Railway, Render, Atlas, Upstash, Cloudflare R2), and Windows agent setup on counter hardware.
+
+---
+
+## Stage-by-Stage Verification Guide
+
+Follow these steps to verify each subsystem of EasyPrint:
+
+### 1. Verify Secret Hygiene
+Scan the repository for any forbidden default passwords:
+```bash
+# Linux / macOS
+chmod +x scripts/check-secrets.sh && ./scripts/check-secrets.sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts/check-secrets.ps1
+```
+
+### 2. Verify Health Check Endpoint
+With MongoDB and Redis running:
+```bash
+curl http://localhost:5000/health
+# Returns HTTP 200 with JSON:
+# { "status": "healthy", "services": { "database": "connected", "redis": "connected", "worker": "healthy" } }
+```
+
+### 3. Run Live Smoke Test Script
+Executes an end-to-end transaction against live services:
+```bash
+node scripts/smoke/smoke-test.js
+```
+
+### 4. Run Automated Test Suites
+Run the full 100-test suite across the monorepo:
 ```bash
 # 1. Shared Engine Tests (9 tests)
 npm --prefix shared test
@@ -168,8 +217,29 @@ node --test server/test/phase3b_server.test.js
 # 6. Phase 4A Notifications, Analytics, Admin, Retention & Hardening (12 tests)
 node --test server/test/phase4a.test.js
 
-# 7. Windows Agent .NET 8 xUnit Test Suite (36 tests)
+# 7. Phase 4B Seed Idempotency, Env Validation, Health & Docker (13 tests)
+node --test server/test/phase4b.test.js
+
+# Or run all server suites in one command (55 tests)
+npm --prefix server test
+
+# 8. Windows Agent .NET 8 xUnit Suite (36 tests)
 dotnet test windows-agent/EasyPrint.Agent.Tests/EasyPrint.Agent.Tests.csproj --no-restore
 ```
 
-**Total Tests:** 87 tests passing (100% green). All tests execute against real MongoDB and Redis instances.
+### 5. Local Docker Compose Verification
+```bash
+# Copy docker environment reference
+cp .env.docker.example .env.docker
+
+# Start containerized services
+docker compose up -d --build
+
+# Inspect service statuses
+docker compose ps
+```
+*(Note: If testing on a host without the Docker CLI installed, review `docker-compose.yml` and `server/test/phase4b.test.js` where Docker execution is logged as `NOT RUN`)*.
+
+---
+
+**Total Test Count:** **100 tests passing** (100% green). All tests execute against real MongoDB and Redis instances.

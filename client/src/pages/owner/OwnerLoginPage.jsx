@@ -8,8 +8,8 @@ export default function OwnerLoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  const [email, setEmail] = useState('owner@easyprint.test');
-  const [password, setPassword] = useState('Owner@123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -62,7 +62,7 @@ export default function OwnerLoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="owner@easyprint.test"
+                  placeholder="owner@example.com"
                   className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-slate-50 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition"
                 />
               </div>

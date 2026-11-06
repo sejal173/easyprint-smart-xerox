@@ -1,3 +1,4 @@
+import './config/env.js';
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
@@ -177,13 +178,48 @@ app.use('/api/upload', uploadLimiter);
 // Serve uploaded files statically for previews
 app.use('/uploads/temp', express.static(TEMP_UPLOAD_DIR));
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
+// Health check endpoint (checks MongoDB, Redis, and Worker process heartbeat)
+app.get(['/health', '/api/health'], async (req, res) => {
+  let dbStatus = 'disconnected';
+  let redisStatus = 'disconnected';
+  let workerStatus = 'unknown';
+
+  try {
+    const mongoose = (await import('mongoose')).default;
+    if (mongoose.connection && mongoose.connection.readyState === 1) {
+      dbStatus = 'connected';
+    }
+  } catch {}
+
+  try {
+    const redis = getRedisClient();
+    const ping = await redis.ping();
+    if (ping === 'PONG') {
+      redisStatus = 'connected';
+      const lastWorkerBeat = await redis.get('worker:heartbeat');
+      if (lastWorkerBeat) {
+        const ageSec = Math.round((Date.now() - Number(lastWorkerBeat)) / 1000);
+        workerStatus = ageSec <= 120 ? 'healthy' : `stale (${ageSec}s ago)`;
+      } else {
+        workerStatus = 'not_registered';
+      }
+    }
+  } catch (err) {
+    redisStatus = 'disconnected';
+  }
+
+  const isHealthy = dbStatus === 'connected' && redisStatus === 'connected';
+  const statusCode = isHealthy ? 200 : 503;
+
+  return res.status(statusCode).json({
+    status: isHealthy ? 'healthy' : 'unhealthy',
     system: 'EasyPrint Smart Xerox API',
-    phase: '4A',
-    time: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    services: {
+      database: dbStatus,
+      redis: redisStatus,
+      worker: workerStatus,
+    },
   });
 });
 

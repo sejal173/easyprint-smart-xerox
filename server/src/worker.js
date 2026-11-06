@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import './config/env.js';
 import { connectDB } from './config/db.js';
 import { getRedisClient, closeRedis } from './config/redis.js';
 import { initStorage } from './config/storage.js';
@@ -10,6 +11,14 @@ import { runFileRetentionCleanup } from './services/retentionService.js';
 let isRunning = true;
 let sweeperInterval = null;
 let retentionInterval = null;
+let heartbeatInterval = null;
+
+async function updateWorkerHeartbeat() {
+  try {
+    const redis = getRedisClient();
+    await redis.set('worker:heartbeat', Date.now(), 'EX', 120);
+  } catch {}
+}
 
 async function startWorker() {
   console.log('===============================================');
@@ -24,7 +33,11 @@ async function startWorker() {
 
     console.log('[Worker] Connected to MongoDB and Redis successfully.');
 
-    // 1. Run lease sweeper immediately, then every 60 seconds
+    // 1. Worker heartbeat to Redis (every 30s)
+    await updateWorkerHeartbeat();
+    heartbeatInterval = setInterval(updateWorkerHeartbeat, 30000);
+
+    // 2. Run lease sweeper immediately, then every 60 seconds
     console.log('[Worker] Starting lease sweeper (every 60s)...');
     sweepExpiredLeases().catch((err) => {
       console.error('[Worker Sweeper Error]:', err.message);
@@ -36,7 +49,7 @@ async function startWorker() {
       });
     }, 60000);
 
-    // 2. Run file retention cleanup immediately, then every 10 minutes (600,000 ms)
+    // 3. Run file retention cleanup immediately, then every 10 minutes (600,000 ms)
     console.log('[Worker] Starting file retention cleanup (every 10m)...');
     runFileRetentionCleanup().catch((err) => {
       console.error('[Worker Retention Error]:', err.message);
@@ -58,10 +71,13 @@ async function startWorker() {
 async function shutdown() {
   console.log('\n[Worker] Gracefully shutting down worker process...');
   isRunning = false;
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
   if (sweeperInterval) clearInterval(sweeperInterval);
   if (retentionInterval) clearInterval(retentionInterval);
 
   try {
+    const redis = getRedisClient();
+    await redis.del('worker:heartbeat');
     await closeRedis();
     console.log('[Worker] Redis connections closed.');
   } catch {}

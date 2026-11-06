@@ -5,7 +5,9 @@ node_modules/
 # Environment files and credentials
 .env
 .env.*
+.env.docker
 !.env.example
+!.env.docker.example
 server/.env
 server/.env.*
 !server/.env.example

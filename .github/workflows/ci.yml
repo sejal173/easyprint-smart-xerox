@@ -1,0 +1,146 @@
+name: EasyPrint CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets-check:
+    name: Security & Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Execute secret verification script
+        run: |
+          chmod +x scripts/check-secrets.sh
+          ./scripts/check-secrets.sh
+
+  test-shared-and-server:
+    name: Backend & Shared Test Suite
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run shared package tests
+        run: npm --prefix shared test
+
+      - name: Run server automated test suites
+        env:
+          NODE_ENV: test
+          PORT: 5000
+          MONGODB_URI: mongodb://127.0.0.1:27017/easyprint_test
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_SECRET: easyprint_test_jwt_secret_ci_pipeline_2026_secure
+          STORAGE_DRIVER: local
+          UPLOAD_DIR: ./uploads_test
+        run: npm --prefix server test
+
+  build-client:
+    name: Web Client Build & Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client production bundle
+        run: npm --prefix client run build
+
+  test-windows-agent:
+    name: Windows Background Agent Test Suite (.NET 8)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK 8.0.x
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('windows-agent/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore windows-agent/EasyPrint.Agent.Tests/EasyPrint.Agent.Tests.csproj
+
+      - name: Execute xUnit test suite
+        run: dotnet test windows-agent/EasyPrint.Agent.Tests/EasyPrint.Agent.Tests.csproj --configuration Release --verbosity normal
+
+  docker-build-verification:
+    name: Container Build Verification (No Push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend (API & Worker) Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: server/Dockerfile
+          push: false
+          tags: easyprint-server:test
+
+      - name: Build Frontend Web Client Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: client/Dockerfile
+          push: false
+          tags: easyprint-client:test
+

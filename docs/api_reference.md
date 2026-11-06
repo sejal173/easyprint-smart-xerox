@@ -8,12 +8,12 @@ Base URL: `http://localhost:5000/api`
 
 ### Register Owner
 - **POST** `/auth/register`
-- **Body:** `{ "name": "Rajesh Sharma", "email": "owner@easyprint.test", "password": "Owner@123" }`
+- **Body:** `{ "name": "Rajesh Sharma", "email": "owner@example.com", "password": "<OWNER_PASSWORD>" }`
 - **Response (201):** Sets `token` httpOnly cookie.
 
 ### Login Owner
 - **POST** `/auth/login`
-- **Body:** `{ "email": "owner@easyprint.test", "password": "Owner@123" }`
+- **Body:** `{ "email": "owner@example.com", "password": "<OWNER_PASSWORD>" }`
 - **Response (200):** Sets `token` httpOnly cookie (7 days expiry).
 
 ### Logout

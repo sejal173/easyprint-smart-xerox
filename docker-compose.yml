@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: easyprint-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: easyprint-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: easyprint-api
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/easyprint
+      - REDIS_URL=redis://redis:6379
+      - PORT=5000
+    ports:
+      - "5000:5000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/server/uploads
+
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: easyprint-worker
+    restart: unless-stopped
+    command: ["node", "server/src/worker.js"]
+    env_file:
+      - .env.docker
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/easyprint
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/server/uploads
+
+  web:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    container_name: easyprint-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  mongo_data:
+  redis_data:
+  uploads_data:
+

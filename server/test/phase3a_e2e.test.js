@@ -76,19 +76,12 @@ test.before(async () => {
     });
   });
 
-  // Log in as owner to get auth cookie
-  const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: 'owner@easyprint.test',
-      password: 'Owner@123',
-    }),
-  });
-  const setCookie = loginRes.headers.get('set-cookie');
-  if (setCookie) {
-    ownerCookie = setCookie.split(';')[0];
-  }
+  // Authenticate as owner to get auth cookie
+  const jwtSecret = process.env.JWT_SECRET || 'easyprint_super_secret_jwt_key_2026';
+  const owner = await User.findOne({ email: 'owner@easyprint.test' });
+  const jwt = (await import('jsonwebtoken')).default;
+  const token = jwt.sign({ id: owner._id, role: 'owner' }, jwtSecret, { expiresIn: '7d' });
+  ownerCookie = `token=${token}`;
 
   testShop = await Shop.findOne({ slug: 'quickcopy-central' });
 });
