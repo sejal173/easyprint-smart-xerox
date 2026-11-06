@@ -4,6 +4,7 @@ import { Order, OrderFile, Shop, Payment, WebhookEvent } from '../models/index.j
 import { calculatePrintPrice, DEFAULT_PRICE_SETTINGS } from '@easyprint/shared';
 import { getRazorpayClient } from '../config/razorpay.js';
 import { markOrderPaid } from '../services/orderQueueService.js';
+import { recordOrderEvent } from '../services/orderEventService.js';
 
 const createOrderSchema = z.object({
   orderNumber: z.string().min(1, 'Order number is required').trim(),
@@ -89,6 +90,11 @@ export async function createPaymentOrder(req, res, next) {
     order.totalAmount = calculatedPrice.totalAmount;
     order.breakdown = calculatedPrice.breakdown;
     await order.save();
+
+    await recordOrderEvent(order._id, order.orderNumber, 'status_pending_payment', {
+      razorpayOrderId: rzpOrder.id,
+      amountInPaise,
+    });
 
     // Create or update Payment record
     await Payment.findOneAndUpdate(

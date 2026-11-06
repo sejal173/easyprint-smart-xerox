@@ -38,6 +38,13 @@ export async function requireAuth(req, res, next) {
       });
     }
 
+    if (user.isSuspended) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been suspended. Please contact administrator.',
+      });
+    }
+
     req.user = user;
     next();
   } catch (err) {
@@ -46,6 +53,19 @@ export async function requireAuth(req, res, next) {
       message: 'Invalid or expired authentication session.',
     });
   }
+}
+
+/**
+ * Middleware: verify the user is an admin.
+ */
+export function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied. Admin permissions required.',
+    });
+  }
+  next();
 }
 
 /**

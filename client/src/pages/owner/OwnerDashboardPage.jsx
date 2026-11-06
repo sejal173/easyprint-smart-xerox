@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Printer, QrCode, Sliders, Loader2, AlertCircle } from 'lucide-react';
+import { Clock, Printer, QrCode, Sliders, Loader2, AlertCircle, TrendingUp } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import OwnerNavbar from '../../components/owner/OwnerNavbar';
@@ -7,6 +7,8 @@ import QueueTab from '../../components/owner/QueueTab';
 import PrintersTab from '../../components/owner/PrintersTab';
 import ShopSettingsTab from '../../components/owner/ShopSettingsTab';
 import QrCodeTab from '../../components/owner/QrCodeTab';
+import EarningsTab from '../../components/owner/EarningsTab';
+import OwnerAlertsBanner from '../../components/owner/OwnerAlertsBanner';
 
 import { fetchOwnerShops, toggleShopStatus } from '../../services/api';
 import useQueue from '../../hooks/useQueue';
@@ -16,8 +18,9 @@ export default function OwnerDashboardPage() {
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [loadingShops, setLoadingShops] = useState(true);
-  const [activeTab, setActiveTab] = useState('queue'); // 'queue' | 'printers' | 'qr' | 'settings'
+  const [activeTab, setActiveTab] = useState('queue'); // 'queue' | 'printers' | 'qr' | 'settings' | 'earnings'
   const [isTogglingOnline, setIsTogglingOnline] = useState(false);
+  const [liveAlert, setLiveAlert] = useState(null);
 
   const loadShops = async () => {
     try {
@@ -50,10 +53,13 @@ export default function OwnerDashboardPage() {
     markPaidDev,
   } = useQueue(selectedShop?._id);
 
-  // Listen to socket shop.status updates
+  // Listen to socket shop.status and owner.alert updates
   useShopSocket(selectedShop?._id, {
     onShopStatus: (data) => {
       setSelectedShop((prev) => (prev ? { ...prev, isOnline: data.isOnline } : prev));
+    },
+    onOwnerAlert: (alertData) => {
+      setLiveAlert(alertData);
     },
   });
 
@@ -98,6 +104,7 @@ export default function OwnerDashboardPage() {
 
   const tabs = [
     { id: 'queue', label: 'Live Queue', icon: Clock, badge: queueLength },
+    { id: 'earnings', label: 'Earnings & Analytics', icon: TrendingUp },
     { id: 'printers', label: 'Printers', icon: Printer, badge: selectedShop.printers?.length },
     { id: 'qr', label: 'Shop QR Standee', icon: QrCode },
     { id: 'settings', label: 'Shop Profile & Rates', icon: Sliders },
@@ -112,6 +119,9 @@ export default function OwnerDashboardPage() {
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* Persistent & Live Alerts Banner */}
+        <OwnerAlertsBanner shopId={selectedShop._id} liveAlert={liveAlert} />
+
         {/* Navigation Tab Bar */}
         <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto print:hidden">
           {tabs.map((tab) => {
@@ -156,6 +166,8 @@ export default function OwnerDashboardPage() {
             onMarkPaidDev={markPaidDev}
           />
         )}
+
+        {activeTab === 'earnings' && <EarningsTab shopId={selectedShop._id} />}
 
         {activeTab === 'printers' && (
           <PrintersTab

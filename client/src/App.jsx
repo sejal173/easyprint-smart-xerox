@@ -10,6 +10,7 @@ import CustomerShopPage from './pages/CustomerShopPage';
 import OwnerLoginPage from './pages/owner/OwnerLoginPage';
 import OwnerRegisterPage from './pages/owner/OwnerRegisterPage';
 import OwnerDashboardPage from './pages/owner/OwnerDashboardPage';
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 
 export default function App() {
   return (
@@ -44,6 +45,16 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <OwnerDashboardPage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Protected super-admin portal */}
+          <Route
+            path="/admin/*"
+            element={
+              <ProtectedRoute requiredRole="admin">
+                <AdminDashboardPage />
               </ProtectedRoute>
             }
           />

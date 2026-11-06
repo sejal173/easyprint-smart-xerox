@@ -13,7 +13,7 @@ export async function getShopBySlug(req, res, next) {
     const { slug } = req.params;
     const shop = await Shop.findOne({ slug: slug.toLowerCase() }).lean();
 
-    if (!shop) {
+    if (!shop || shop.status === 'suspended') {
       return res.status(404).json({
         success: false,
         message: `Shop with slug "${slug}" not found.`,
@@ -46,12 +46,12 @@ export async function getShopBySlug(req, res, next) {
 
     const formattedPrinting = printingOrder
       ? {
-          effectivePages: printingOrder.breakdown?.effectivePages || 1,
-          copies: printingOrder.options?.copies || 1,
-          pagesPerSheet: printingOrder.options?.pagesPerSheet || 1,
-          sides: printingOrder.options?.sides || 'single',
-          printingStartedAt: printingOrder.printingStartedAt,
-        }
+        effectivePages: printingOrder.breakdown?.effectivePages || 1,
+        copies: printingOrder.options?.copies || 1,
+        pagesPerSheet: printingOrder.options?.pagesPerSheet || 1,
+        sides: printingOrder.options?.sides || 'single',
+        printingStartedAt: printingOrder.printingStartedAt,
+      }
       : null;
 
     const waitStats = calculateCustomerWaitTime({
@@ -137,7 +137,7 @@ export async function getShopQrCodeImage(req, res, next) {
     const { slug } = req.params;
     const shop = await Shop.findOne({ slug: slug.toLowerCase() }).lean();
 
-    if (!shop) {
+    if (!shop || shop.status === 'suspended') {
       return res.status(404).json({ success: false, message: 'Shop not found' });
     }
 

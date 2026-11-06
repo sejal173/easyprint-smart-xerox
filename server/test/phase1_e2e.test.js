@@ -48,6 +48,17 @@ test.before(async () => {
   await initStorage();
   await connectDB();
 
+  const shop = await Shop.findOneAndUpdate(
+    { slug: 'quickcopy-central' },
+    { isOnline: true, status: 'active' },
+    { new: true }
+  );
+
+  if (shop) {
+    const { AgentDevice } = await import('../src/models/index.js');
+    await AgentDevice.deleteMany({ shop: shop._id });
+  }
+
   await new Promise((resolve) => {
     server = http.createServer(app);
     server.listen(0, '127.0.0.1', () => {
@@ -63,6 +74,10 @@ test.after(async () => {
   if (server) {
     await new Promise((resolve) => server.close(resolve));
   }
+  try {
+    const { closeRedis } = await import('../src/config/redis.js');
+    await closeRedis();
+  } catch {}
   const mongoose = (await import('mongoose')).default;
   await mongoose.disconnect();
 });

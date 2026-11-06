@@ -21,8 +21,10 @@ import pricingRoutes from './routes/pricingRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import devRoutes from './routes/devRoutes.js';
-import { sweepExpiredLeases } from './controllers/agentController.js';
+import { seedAdminUser } from './utils/seedAdmin.js';
+import { authLimiter, paymentLimiter, uploadLimiter } from './middleware/rateLimitMiddleware.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
@@ -95,16 +97,65 @@ io.on('connection', (socket) => {
   socket.on('join.order', handleJoinOrder);
 });
 
-// Security & Parsing Middleware
+// Secrets validation for production boot
+export function validateProductionSecrets() {
+  if (process.env.NODE_ENV === 'production') {
+    const defaultSecrets = [
+      'easyprint_super_secret_jwt_key_2026',
+      'easyprint_secure_storage_secret',
+      'default',
+      'secret',
+      'changeme',
+    ];
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret || defaultSecrets.includes(jwtSecret.trim())) {
+      throw new Error('[Startup Fatal] Refusing to boot in production with missing or default JWT_SECRET.');
+    }
+
+    const rzpSecret = process.env.RAZORPAY_KEY_SECRET;
+    if (!rzpSecret || defaultSecrets.includes(rzpSecret.trim())) {
+      throw new Error('[Startup Fatal] Refusing to boot in production with missing or default RAZORPAY_KEY_SECRET.');
+    }
+
+    const rzpWebhook = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!rzpWebhook || defaultSecrets.includes(rzpWebhook.trim())) {
+      throw new Error('[Startup Fatal] Refusing to boot in production with missing or default RAZORPAY_WEBHOOK_SECRET.');
+    }
+  }
+}
+
+// Security & Parsing Middleware with CSP allowing Razorpay and Socket.IO
 app.use(
   helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", 'https://checkout.razorpay.com'],
+        frameSrc: ["'self'", 'https://api.razorpay.com', 'https://checkout.razorpay.com'],
+        connectSrc: ["'self'", 'https://api.razorpay.com', 'https://lumberjack.razorpay.com', 'ws:', 'wss:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      },
+    },
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
 
+// Strict CORS allowlist from CLIENT_URL (comma-separated list)
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173,http://127.0.0.1:5173')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Not allowed by CORS: Origin ${origin} not permitted.`));
+    },
     credentials: true,
   })
 );
@@ -117,6 +168,12 @@ app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Apply Redis-backed rate limiting to critical endpoints
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/payments/orders', paymentLimiter);
+app.use('/api/upload', uploadLimiter);
+
 // Serve uploaded files statically for previews
 app.use('/uploads/temp', express.static(TEMP_UPLOAD_DIR));
 
@@ -125,7 +182,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     system: 'EasyPrint Smart Xerox API',
-    phase: '3A',
+    phase: '4A',
     time: new Date().toISOString(),
   });
 });
@@ -133,6 +190,7 @@ app.get('/api/health', (req, res) => {
 // Mount Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/owner/shops', ownerShopRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/shops', shopRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/pricing', pricingRoutes);
@@ -152,25 +210,19 @@ app.use(errorHandler);
 // Start server
 async function startServer() {
   try {
+    validateProductionSecrets();
     await initStorage();
     await connectDB();
     getRedisClient();
+    await seedAdminUser();
 
     server.listen(PORT, () => {
       console.log(`===============================================`);
       console.log(` EasyPrint Backend API running on port ${PORT}`);
       console.log(` Health check: http://localhost:${PORT}/api/health`);
-      console.log(` Phase 3A: Razorpay Payments & Agent API Ready`);
+      console.log(` Phase 4A: Admin Panel, Analytics & Security Ready`);
       console.log(`===============================================`);
     });
-
-    // Run lease sweep on startup and every 60s
-    sweepExpiredLeases(io).catch(() => {});
-    setInterval(() => {
-      sweepExpiredLeases(io).catch((err) => {
-        console.error('[Lease Sweeper Error]:', err.message);
-      });
-    }, 60000);
   } catch (err) {
     console.error(`Failed to start server: ${err.message}`);
     process.exit(1);

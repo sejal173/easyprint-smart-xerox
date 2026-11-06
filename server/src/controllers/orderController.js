@@ -4,6 +4,7 @@ import { OrderFile } from '../models/OrderFile.js';
 import { stagedFilesStore } from './uploadController.js';
 import { generateOrderNumber } from '../utils/orderNumberGenerator.js';
 import { calculatePrintPrice, DEFAULT_PRICE_SETTINGS, ORDER_STATUS } from '@easyprint/shared';
+import { recordOrderEvent } from '../services/orderEventService.js';
 import { z } from 'zod';
 
 const draftOrderSchema = z.object({
@@ -49,7 +50,14 @@ export async function createDraftOrder(req, res, next) {
       });
     }
 
-    if (!shop.isOnline || shop.status !== 'active') {
+    if (shop.status === 'suspended') {
+      return res.status(400).json({
+        success: false,
+        message: 'This shop is currently suspended and cannot accept orders.',
+      });
+    }
+
+    if (!shop.isOnline) {
       return res.status(400).json({
         success: false,
         message: 'This shop is currently offline and not accepting orders.',
@@ -92,6 +100,11 @@ export async function createDraftOrder(req, res, next) {
       totalAmount: priceResult.totalAmount,
       breakdown: priceResult.breakdown,
       options,
+    });
+
+    await recordOrderEvent(order._id, order.orderNumber, 'status_draft', {
+      totalAmount: order.totalAmount,
+      customerPhone,
     });
 
     // Create OrderFile records linked to this order

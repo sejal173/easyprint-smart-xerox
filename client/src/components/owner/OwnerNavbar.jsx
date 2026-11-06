@@ -1,5 +1,6 @@
 import React from 'react';
-import { Printer, LogOut, Power } from 'lucide-react';
+import { Printer, LogOut, Power, ShieldAlert } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 export default function OwnerNavbar({ shop, onToggleOnline, isTogglingOnline }) {
@@ -19,7 +20,7 @@ export default function OwnerNavbar({ shop, onToggleOnline, isTogglingOnline }) 
                 {shop?.name || 'Owner Dashboard'}
               </span>
               <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
-                Phase 2
+                Phase 4A
               </span>
             </div>
             <p className="text-xs text-slate-500 truncate max-w-[200px] sm:max-w-xs">
@@ -29,6 +30,18 @@ export default function OwnerNavbar({ shop, onToggleOnline, isTogglingOnline }) 
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Admin link if user is admin */}
+          {user?.role === 'admin' && (
+            <Link
+              to="/admin"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl border border-rose-200 transition"
+              title="Super-Admin Panel"
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Admin Panel</span>
+            </Link>
+          )}
+
           {/* Live Online / Offline Toggle */}
           {shop && (
             <button

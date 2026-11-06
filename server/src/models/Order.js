@@ -152,6 +152,7 @@ const orderSchema = new mongoose.Schema(
 
 // Required compound index for fast live queue lookups
 orderSchema.index({ shop: 1, status: 1, paidAt: 1 });
+orderSchema.index({ shop: 1, paidAt: 1 });
 
 // Unique partial index for razorpayPaymentId (allows nulls)
 orderSchema.index(

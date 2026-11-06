@@ -142,6 +142,44 @@ export async function getFileStream(storageKey) {
 }
 
 /**
+ * Deletes a file from storage (retention cleanup).
+ *
+ * @param {string} storageKey
+ * @returns {Promise<boolean>}
+ */
+export async function deleteFile(storageKey) {
+  try {
+    if (STORAGE_DRIVER === 's3' || STORAGE_DRIVER === 'r2') {
+      const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+      const s3 = await getS3Client();
+      const bucket = process.env.S3_BUCKET || 'easyprint-files';
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: storageKey,
+        })
+      );
+      return true;
+    }
+
+    const filePath = path.join(FILES_DIR, storageKey);
+    try {
+      await fs.unlink(filePath);
+    } catch (e) {
+      // Also try legacy temp path if exists
+      const legacyPath = path.join(TEMP_UPLOAD_DIR, storageKey);
+      try {
+        await fs.unlink(legacyPath);
+      } catch {}
+    }
+    return true;
+  } catch (err) {
+    console.error(`[Storage] Failed to delete file ${storageKey}:`, err.message);
+    return false;
+  }
+}
+
+/**
  * Generates a signed download URL for an uploaded file.
  *
  * @param {string} storageKey

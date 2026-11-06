@@ -8,9 +8,12 @@ EasyPrint is a full-stack Xerox and print shop automation platform built with Mo
 
 - **Phase 1 (Customer Web App & Pricing Engine):** COMPLETE (Tests: 6/6 passing)
 - **Phase 2 (Owner Dashboard, Live FIFO Queue & Capacity Limit):** COMPLETE (Tests: 7/7 passing)
-- **Phase 3A (Razorpay Payments & Windows Agent Server API):** COMPLETE (Tests: 11/11 passing)
-- **Phase 3B (C# Windows Background Printing Agent):** PENDING (Next Step)
-- **Phase 4 (Super Admin & System Health Monitoring):** PENDING
+- **Phase 3A (Razorpay Payments & Agent Server API):** COMPLETE (Tests: 11/11 passing)
+- **Phase 3B (Windows Agent Tray App & xUnit Suite):** COMPLETE (Tests: 6/6 server, 36/36 xUnit passing)
+- **Phase 4A (Notifications, Analytics, Admin Panel, Retention & Hardening):** COMPLETE (Tests: 12/12 passing)
+- **Phase 4B (Docker Containerization & CI/CD):** PENDING (Final Step)
+
+**Total Test Suite Status:** 87 / 87 tests passing across monorepo (100% green).
 
 ---
 
@@ -103,13 +106,52 @@ When testing payments in Razorpay test mode:
 
 ---
 
+## Phase 4A Features Overview
+
+### 1. Customer & Owner Notifications
+- **Customer Pickup Modal:** When an order transitions to `completed`, Socket.IO emits `order.completed` carrying `queueNumber`. The customer page displays an instant pickup modal: *"Your print is ready. Please collect it from the counter. Queue number #<n>"*.
+- **Desktop Notifications:** If permitted, a desktop browser notification is displayed. Permission is requested explicitly on a user button click ("Notify me when ready"), never on page load.
+- **Owner Alerts Banner:** Listen to `owner.alert` over Socket.IO and displays persistent alerts for job failures, printer offline heartbeats, and paper-out states. Alerts can be dismissed and marked read in MongoDB (`PATCH /api/owner/shops/:id/alerts/:alertId/read`).
+
+### 2. Owner Performance Analytics & CSV Export
+- **Financial & Operational Analytics:** `GET /api/owner/shops/:id/analytics?from=&to=` computes gross collections, total refunds, average turnaround time (paid to print complete), failure rate, and daily revenue chart series.
+- **Frontend Analytics Tab:** 30-day interactive revenue SVG chart, KPI cards, and date filtering.
+- **CSV Injection-Protected Export:** `GET /api/owner/shops/:id/orders.csv` streams order history with leading formula characters (`=`, `+`, `-`, `@`) escaped with `'` to prevent spreadsheet code injection.
+
+### 3. Super-Admin Portal (`/admin`)
+- **Access Control:** Protected by `requireAdmin` middleware. Blocks unauthenticated users and regular shop owners (`403 Forbidden`). Suspended users are locked out.
+- **Platform Management:**
+  - **Shops:** Inspect all platform shops, monitor presence, and toggle shop status (`active` <-> `suspended`). Suspended shops are hidden from customers (`404`) and cannot accept orders (`400`).
+  - **Orders & Audit Timeline:** Browse all platform orders with search/filter, and inspect the chronological `OrderEvent` audit timeline (draft -> payment -> queued -> printing -> completed -> retention purge).
+  - **Financials:** Platform-wide gross payments, refunds, and net revenue retained.
+  - **Users & RBAC:** Manage user roles (`owner` <-> `admin`) and suspension flags. Admins cannot demote or suspend themselves (`400 Bad Request`).
+  - **Audit Logging:** Every admin mutation writes an immutable `AdminAction` audit trail record.
+- **Default Super-Admin Seed:**
+  - Email: `admin@easyprint.com`
+  - Password: `Admin@EasyPrint2026!`
+
+### 4. Scheduled File Retention & Worker Separation
+- **Privacy & Storage Retention:** Completed order file bytes are deleted immediately upon completion or after 24h for cancelled/draft orders. Sets `OrderFile.deletedAt` and logs `file_retention_deleted` `OrderEvent`. Signed download URLs for purged files return `410 Gone`. Order records and totals are preserved for accounting.
+- **Dedicated Worker Process:** Separated from API server into `server/src/worker.js`. Runs:
+  - Agent lease sweeper every 60 seconds (auto-requeuing dead jobs).
+  - Retention file purge every 10 minutes.
+  - Start with: `npm --prefix server run start:worker` (or `npm --prefix server run dev:worker`).
+
+### 5. Production Security Hardening
+- **Secrets Validation:** `validateProductionSecrets()` prevents server boot in production if default or weak secrets are detected.
+- **CORS Allowlist:** Rejects unauthorized cross-origin requests.
+- **Rate Limiting:** Distributed Redis-backed rate limiting on auth (10 req/15min), payments, and file uploads.
+- **Helmet CSP:** Configured to permit Razorpay checkout iframe and Socket.IO connections.
+
+---
+
 ## Running Automated Tests
 
-Run the full automated test suite:
+Run the full automated test suite across all four phases and packages:
 
 ```bash
-# 1. Shared Pricing & ETA Unit Tests (9 tests)
-node --test shared/test/pricing.test.js
+# 1. Shared Engine Tests (9 tests)
+npm --prefix shared test
 
 # 2. Phase 1 Customer Web App & File Processing (6 tests)
 node --test server/test/phase1_e2e.test.js
@@ -117,8 +159,17 @@ node --test server/test/phase1_e2e.test.js
 # 3. Phase 2 Owner Auth, Live FIFO Queue & Capacity Limit (7 tests)
 node --test server/test/phase2_e2e.test.js
 
-# 4. Phase 3A Razorpay Payments & Windows Agent API (11 tests)
+# 4. Phase 3A Razorpay Payments & Windows Agent Server API (11 tests)
 node --test server/test/phase3a_e2e.test.js
+
+# 5. Phase 3B Windows Agent Server Leases & Sweeper (6 tests)
+node --test server/test/phase3b_server.test.js
+
+# 6. Phase 4A Notifications, Analytics, Admin, Retention & Hardening (12 tests)
+node --test server/test/phase4a.test.js
+
+# 7. Windows Agent .NET 8 xUnit Test Suite (36 tests)
+dotnet test windows-agent/EasyPrint.Agent.Tests/EasyPrint.Agent.Tests.csproj --no-restore
 ```
 
-All 33 test cases pass against real local MongoDB and Redis instances.
+**Total Tests:** 87 tests passing (100% green). All tests execute against real MongoDB and Redis instances.

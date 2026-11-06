@@ -27,6 +27,12 @@ dist/
 build/
 bin/
 obj/
+# Windows agent
+windows-agent/**/bin/
+windows-agent/**/obj/
+windows-agent/publish/
+windows-agent/**/appsettings.json
+!windows-agent/**/appsettings.example.json
 
 # OS and IDE files
 .DS_Store

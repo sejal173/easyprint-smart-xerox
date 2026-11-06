@@ -16,6 +16,10 @@ import {
   cancelOrder,
   retryOrder,
   createAgentToken,
+  getShopAlerts,
+  markAlertAsRead,
+  getShopAnalytics,
+  exportOrdersCsv,
 } from '../controllers/ownerShopController.js';
 
 const router = Router();
@@ -49,6 +53,14 @@ router.post('/:id/orders/:orderNumber/retry', retryOrder);
 
 // Windows Agent pairing token
 router.post('/:id/agent-token', createAgentToken);
+
+// Alerts
+router.get('/:id/alerts', getShopAlerts);
+router.patch('/:id/alerts/:alertId/read', markAlertAsRead);
+
+// Analytics & CSV Export
+router.get('/:id/analytics', getShopAnalytics);
+router.get('/:id/orders.csv', exportOrdersCsv);
 
 export default router;
 

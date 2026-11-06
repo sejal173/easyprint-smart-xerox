@@ -1,14 +1,120 @@
 # EasyPrint Windows Printing Agent (.NET 8)
 
-The Windows background printing agent runs on the shop owner's PC connected to physical Xerox printers (such as HP LaserJet, Canon imageRUNNER, Epson, etc.).
+The EasyPrint Windows Printing Agent is a lightweight, high-performance background tray application written in **C# / .NET 8 (`net8.0-windows`, x64)**. It runs on the Xerox shop owner's Windows desktop PC, connects securely to the EasyPrint API and Socket.IO server, receives customer print jobs in real time, rasterizes PDF pages with vector accuracy, submits jobs directly to the Windows Print Spooler, and reports print status back to the server.
 
-## Architecture Overview
-- **Runtime:** C# / .NET 8 (WinForms / WPF system tray app and Windows Service).
-- **Communication:** Secure WebSocket (`wss://`) with fallback HTTP long-polling every 15 seconds.
-- **Security:** Shop PC pairs with device token stored using Windows Data Protection API (DPAPI).
-- **Rendering:** PDFium for accurate vector page rendering and rasterization.
-- **Print Spooler Integration:** `System.Printing` (`PrintQueue` and `PrintSystemJobInfo`) for real-time spooler progress monitoring.
-- **Idempotency:** Local SQLite / memory cache of processed job IDs preventing reprinting.
+---
 
-> Activated and tested in **Phase 3**.
+## Architecture & Technology Stack
 
+| Component | Technology | Rationale & Justification |
+| :--- | :--- | :--- |
+| **Framework** | .NET 8.0 SDK / Runtime (`net8.0-windows`) | Modern, cross-platform performance with first-class Windows Desktop and WinForms integration. |
+| **Real-time Protocol** | `SocketIOClient` (v3.1.2) | Maintained .NET client library implementing the Socket.IO v4 protocol with automatic reconnection, heartbeat pings, and room events. |
+| **PDF Rendering** | `PDFiumCore` (v134.0.6982) | Actively maintained .NET wrapper for Google's native PDFium engine. Renders vector-sharp 300 DPI bitmaps without external Acrobat dependencies. (Replaces deprecated PdfiumViewer). |
+| **Logging** | `Serilog` (v4.2.0) + `Serilog.Sinks.File` | Structured logging with daily rolling file sink, 14-day log retention, and sanitization of tokens/URLs. |
+| **Spooler & Printing** | `System.Drawing.Common` & `System.Printing` | Direct access to GDI+ `PrintDocument` and WPF `PrintQueue` APIs for spooler monitoring, paper out detection, and printer offline detection. |
+| **Secret Storage** | DPAPI (`ProtectedData.Protect` / `Unprotect`) | Encrypts device authentication tokens at rest using Windows DPAPI under `DataProtectionScope.CurrentUser`. Tokens are never stored in plaintext config files or logs. |
+
+---
+
+## Architectural Decision: Desktop Tray App vs. Windows Service
+
+The EasyPrint Agent runs as an interactive **Windows Tray Application (WinForms Context)** rather than a background Windows Service (`Session 0`).
+
+### Why Not Run as a Windows Service?
+1. **Windows Session 0 Isolation:** Starting with Windows Vista/Server 2008, services run in isolated Session 0, which cannot interact with the desktop. Printer drivers on Windows often require access to the interactive desktop session for user-mode rendering and GDI printer device contexts (`HDC`). Many consumer and commercial printer drivers silently fail or crash when invoked from Session 0.
+2. **Access to User Spooler & Network Printers:** Network and shared printers mapped under a shop operator's Windows account are accessible in user sessions, but are invisible or require complex authentication configuration in `NT AUTHORITY\SYSTEM` service sessions.
+3. **Operator Controls:** The system tray icon provides immediate visual indicators (Green = Ready, Amber = Offline/Warning, Red = Error) and context menus for pausing queue processing, viewing logs, changing pairing tokens, and checking active print progress.
+
+To ensure continuous operation, the agent automatically registers in the current user's registry run key (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`) to launch on Windows startup.
+
+---
+
+## System Requirements
+
+- **Operating System:** Windows 10 (version 1809 or higher) or Windows 11 (64-bit / x64).
+- **Runtime:** [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8.0).
+- **RAM:** Minimum 2 GB (4 GB recommended for large multi-page PDF rendering).
+- **Disk:** 100 MB free space for the agent and temporary print buffers.
+- **Printers:** Any Windows-compatible printer (USB, Network, or Virtual e.g. Microsoft Print to PDF).
+
+---
+
+## Installation & First-Time Pairing
+
+1. **Extract or Publish the Agent:**
+   ```powershell
+   # Publish self-contained or framework-dependent release binaries:
+   dotnet publish windows-agent/EasyPrint.Agent/EasyPrint.Agent.csproj -c Release -r win-x64 --self-contained false -o windows-agent/publish
+   ```
+2. **Launch the Application:**
+   Run `windows-agent\publish\EasyPrint.Agent.exe`.
+3. **Enter Device Pairing Credentials:**
+   On first launch, if no valid DPAPI token is detected, the **EasyPrint Agent Pairing Dialog** appears:
+   - **Server URL:** Your EasyPrint server base URL (e.g. `https://print.yourdomain.com` or `http://localhost:5000`).
+   - **Device Token:** The pairing token generated by the shop owner from the EasyPrint Web Dashboard (`/owner/printers`).
+4. **Successful Connection:**
+   The pairing token is encrypted via DPAPI and stored in `%LOCALAPPDATA%\EasyPrint\agent.dat`.
+   The system tray icon appears in the Windows taskbar corner notification area.
+
+---
+
+## System Tray Indicators & Context Menu
+
+- 🟢 **Green Icon:** Connected to server, printer ready, actively listening for jobs.
+- 🟡 **Amber Icon:** Printer offline, paper out, queue paused, or reconnecting to server.
+- 🔴 **Red Icon:** Printer in error state, network disconnected, or authentication revoked.
+
+### Context Menu Actions:
+- **Status Summary:** Shows current status (e.g. "Status: Ready", "Printing job 1/3 (Page 2)").
+- **Pause Queue / Resume Queue:** Temporarily stop claiming new jobs from the shop queue.
+- **Open Logs:** Opens the Serilog logs directory (`%LOCALAPPDATA%\EasyPrint\logs`) in Windows File Explorer.
+- **Re-pair Agent...:** Clears stored DPAPI token and re-opens the Pairing Dialog.
+- **Exit:** Gracefully terminates the agent, completing any in-flight print lease.
+
+---
+
+## Job Processing Pipeline
+
+1. **Claiming:** The agent receives a real-time `job.queued` Socket.IO push or polls `GET /api/agent/jobs/next`.
+2. **Atomic Lease:** Server transitions job to `claimed` status with a 5-minute lease expiry.
+3. **Download & Validation:** The agent downloads document files over HTTPS, inspects magic bytes (`%PDF-`, PNG, JPEG), and ensures buffer integrity.
+4. **Page & Layout Transformation:**
+   - **Page Ranges:** Parses custom ranges (e.g. `1-3, 5, 8-10`) clamped to document length.
+   - **Odd/Even Filter:** Filters pages based on customer selection.
+   - **N-Up Compositing:** Formats 1, 2, or 4 pages per sheet.
+   - **Paper & Duplex:** Sets A4/A3, Landscape/Portrait, Single/Double-sided (DuplexVertical / DuplexHorizontal).
+5. **Spooler Submission:** Sends pages through `System.Drawing.Printing.PrintDocument` with document name `EP-<orderNumber>-<jobId>`.
+6. **Active Monitoring & Lease Renewal:** While printing, the agent monitors the spooler queue. Every 60 seconds, it sends `POST /api/agent/jobs/:id/lease` with an idempotency key to renew the lease until finished.
+7. **Completion & Cleanup:** On success, calls `PATCH /api/agent/jobs/:id/status` with `{ status: "completed", sheetCount, printDurationSeconds }`, cleans up local temporary files, and updates the atomic journal.
+
+---
+
+## Crash & Restart Recovery
+
+The agent maintains an atomic transaction journal in `%LOCALAPPDATA%\EasyPrint\journal.json`. On startup:
+1. **Journal Inspection:** Checks if any job was recorded as `claimed` or `printing` before a power outage or restart.
+2. **Server Reconciliation:** Calls `GET /api/agent/jobs/:id/status`.
+3. **Local Spooler Verification:** Checks the Windows Print Spooler for active jobs matching `EP-<orderNumber>-<jobId>`.
+4. **Safe Decision:**
+   - If spooler completed or empty and server status is `printing`, it reports completion or allows safe lease expiry.
+   - If spooler job failed, it reports `failed` with error details.
+   - Deletes leftover temporary raster buffers older than 24 hours.
+
+---
+
+## Driver Limitations & Notes
+
+> [!WARNING]
+> **Glossy Paper Limitation:** Standard Windows `System.Drawing.Printing.PrinterSettings` does not provide a universal cross-vendor API to select "Glossy" vs "Plain" paper media type across all printer manufacturer drivers. If a job requests glossy paper, the agent checks driver capabilities; if unsupported, it logs an explicit operator error and notifies the shop owner dashboard.
+
+---
+
+## Troubleshooting
+
+| Problem | Cause | Resolution |
+| :--- | :--- | :--- |
+| Tray icon is Amber (Printer Offline) | Printer powered off, USB disconnected, or out of paper. | Check physical cable, power switch, and paper tray. |
+| Tray icon is Red (Authentication Error) | Agent device token was revoked from owner dashboard. | Right-click tray -> **Re-pair Agent...** -> enter new device token. |
+| Socket keeps reconnecting | Network firewall blocking WebSocket or wrong Server URL. | Verify URL in `%LOCALAPPDATA%\EasyPrint\appsettings.json` and ensure port 443/80 is reachable. |
+| Print jobs not appearing | Queue is paused or another printer is set as default. | Right-click tray -> click **Resume Queue**, or set `PrinterName` in `appsettings.json`. |

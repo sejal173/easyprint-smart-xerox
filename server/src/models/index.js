@@ -9,3 +9,5 @@ export { AgentDevice } from './AgentDevice.js';
 export { WebhookEvent } from './WebhookEvent.js';
 export { Payment } from './Payment.js';
 export { AdminAction } from './AdminAction.js';
+export { OwnerAlert } from './OwnerAlert.js';
+export { OrderEvent } from './OrderEvent.js';

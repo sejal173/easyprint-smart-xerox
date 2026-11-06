@@ -23,6 +23,10 @@ const userSchema = new mongoose.Schema(
       enum: ['owner', 'admin'],
       default: 'owner',
     },
+    isSuspended: {
+      type: Boolean,
+      default: false,
+    },
     createdAt: {
       type: Date,
       default: Date.now,

@@ -5,6 +5,7 @@ import { OrderFile } from '../models/OrderFile.js';
 import { PrintJob } from '../models/PrintJob.js';
 import { getShopQueue, getRedisClient } from '../config/redis.js';
 import { calculateCustomerWaitTime, calculateRollingAverageSecondsPerSheet } from '@easyprint/shared';
+import { recordOrderEvent } from './orderEventService.js';
 
 /**
  * Returns current date in YYYY-MM-DD format.
@@ -126,6 +127,12 @@ export async function markOrderPaid(orderNumber, io = null, { customDate = null 
     return { order: refreshed, isAlreadyQueued: true };
   }
 
+  await recordOrderEvent(updatedOrder._id, updatedOrder.orderNumber, 'status_queued', {
+    queueNumber,
+    queueDate: dateStr,
+    paidAt,
+  });
+
   // Add to shop's BullMQ FIFO queue
   try {
     const bullQueue = getShopQueue(shop._id.toString());
@@ -165,6 +172,13 @@ export async function markOrderPaid(orderNumber, io = null, { customDate = null 
   // Calculate live ETA stats for Socket.IO event emission
   if (io) {
     emitQueueAndOrderStatus(shop._id.toString(), updatedOrder, io);
+    // Emit job.queued to shop room for the Windows background printing agent
+    io.to(`shop:${shop._id}`).emit('job.queued', {
+      shopId: shop._id.toString(),
+      orderNumber: updatedOrder.orderNumber,
+      queueNumber: updatedOrder.queueNumber,
+      status: 'queued',
+    });
   }
 
   return { order: updatedOrder, isAlreadyQueued: false };

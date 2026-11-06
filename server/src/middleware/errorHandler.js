@@ -21,6 +21,14 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
+  // CORS rejection
+  if (err.message && (err.message.includes('CORS') || err.message.includes('Not allowed by CORS'))) {
+    return res.status(403).json({
+      success: false,
+      message: 'Not allowed by CORS',
+    });
+  }
+
   const statusCode = err.statusCode || 500;
   return res.status(statusCode).json({
     success: false,

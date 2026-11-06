@@ -1,4 +1,4 @@
-# EasyPrint API Reference (Phases 1, 2 & 3A)
+# EasyPrint API Reference (Phases 1, 2, 3A & 3B)
 
 Base URL: `http://localhost:5000/api`
 
@@ -170,6 +170,37 @@ Base URL: `http://localhost:5000/api`
   - Transitions to `claimed`, increments `attemptCount`, and sets 5-minute lease (`leaseExpiresAt = now + 5 min`).
   - Returns 200 with job details and signed download URLs. If no queued jobs, returns 204 No Content.
 
+### Renew Job Lease (While Printing)
+- **POST** `/agent/jobs/:id/lease`
+- **Headers:** `Authorization: Bearer <agentToken>`
+- **Body:** `{ "idempotencyKey": "uuid_optional" }`
+- **Behavior:**
+  - Requires calling agent device to own the job and job to be in `claimed` or `printing` state.
+  - Sets `leaseExpiresAt = now + AGENT_LEASE_SECONDS` (default 300s).
+  - Returns `200 OK` with `{ success: true, leaseExpiresAt }`.
+  - Returns `409 Conflict` if the job is no longer owned by this device or has expired/re-assigned.
+  - Returns `404 Not Found` if job belongs to a different shop.
+
+### Reconcile Job Status (Post-Restart Recovery)
+- **GET** `/agent/jobs/:id/status`
+- **Headers:** `Authorization: Bearer <agentToken>`
+- **Behavior:**
+  - Used by the Windows agent after unexpected crashes, restarts, or power failures.
+  - Confirms server status for a job claimed by this device.
+  - Returns `200 OK` with:
+  ```json
+  {
+    "success": true,
+    "jobId": "...",
+    "orderNumber": "EP-261106-ABCD",
+    "status": "printing",
+    "attemptCount": 1,
+    "spoolerJobId": 1052,
+    "leaseExpiresAt": "2026-11-06T12:45:00.000Z"
+  }
+  ```
+  - Returns `404 Not Found` if job does not exist or does not belong to the calling device's shop.
+
 ### Update Job Status
 - **PATCH** `/agent/jobs/:id/status`
 - **Body:**
@@ -204,5 +235,76 @@ Base URL: `http://localhost:5000/api`
 - Server emits:
   - `queue.updated` -> `{ queueLength, estimatedWaitSeconds, estimatedWaitFormatted }`
   - `order.status` -> `{ orderNumber, status, queuePosition, ordersAhead, eta }`
+  - `order.completed` -> `{ orderNumber, queueNumber, status, completedAt }` (drives customer pickup modal)
+  - `owner.alert` -> `{ id, type, message, orderNumber, createdAt }` (drives owner error banner & notifications)
+  - `job.queued` -> `{ orderNumber, queueNumber, shopId }` (alerts Windows agent to claim job immediately)
   - `agent.status` -> `{ agentId, name, printerStatus, lastHeartbeatAt }`
-  - `shop.status` -> `{ shopId, isOnline }`
+  - `shop.status` -> `{ shopId, isOnline, status }`
+
+---
+
+## 6. Owner Alerts & Analytics APIs
+
+### List Shop Alerts
+- **GET** `/api/owner/shops/:id/alerts`
+- Returns persistent alerts for printer jams, paper-out, and failed print jobs.
+
+### Mark Alert as Read
+- **PATCH** `/api/owner/shops/:id/alerts/:alertId/read`
+- Sets `readAt = new Date()`.
+
+### Shop Performance & Earnings Analytics
+- **GET** `/api/owner/shops/:id/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- Returns aggregate metrics: gross revenue, total refunds, average turnaround seconds, failure rate, and daily chart series.
+
+### Export Orders as CSV
+- **GET** `/api/owner/shops/:id/orders.csv?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- Streams CSV export protected against CSV formula injection (prepends `'` to leading `=`, `+`, `-`, `@`).
+
+---
+
+## 7. Super-Admin Management APIs (RBAC: `requireAdmin`)
+
+### List All Platform Shops
+- **GET** `/api/admin/shops?status=&search=&page=&limit=`
+- Supports filtering by `active` or `suspended` and searching by name, slug, or owner email.
+
+### Update Shop Status
+- **PATCH** `/api/admin/shops/:id/status`
+- **Body:** `{ "status": "active" | "suspended" }`
+- Suspended shops are hidden from customer lookup (`404`) and cannot accept orders (`400`). Writes an immutable `AdminAction` audit record.
+
+### List Platform Orders
+- **GET** `/api/admin/orders?shop=&status=&from=&to=&page=&limit=`
+
+### Get Order by Order Number with Audit Timeline
+- **GET** `/api/admin/orders/:orderNumber`
+- Returns complete order details and chronological `OrderEvent` timeline.
+
+### List Payments & Platform Revenue
+- **GET** `/api/admin/payments?status=&page=&limit=`
+- Returns payments log and platform financial aggregates (`totalPaid`, `totalRefunded`, `netRevenue`).
+
+### List Platform Users
+- **GET** `/api/admin/users?role=&page=&limit=`
+
+### Update User Privileges or Suspension
+- **PATCH** `/api/admin/users/:id`
+- **Body:** `{ "role": "owner" | "admin", "isSuspended": boolean }`
+- Self-suspension and self-demotion are blocked (`400`). Writes an immutable `AdminAction` audit record.
+
+---
+
+## 8. Scheduled File Retention & Worker Process
+
+### File Retention Policy
+- File bytes for completed orders and non-active orders older than 24h are deleted from storage.
+- Associated `OrderFile.deletedAt` timestamp is set.
+- Access to deleted files returns `410 Gone`.
+- Order records, financial totals, and audit logs are permanently preserved.
+
+### Background Worker
+- Command: `npm --prefix server run start:worker` (`worker.js`).
+- Executes:
+  - Agent lease sweeper every 60 seconds (requeues expired leases).
+  - File retention cleanup every 10 minutes.

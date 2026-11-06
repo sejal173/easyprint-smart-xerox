@@ -7,11 +7,13 @@ import { OrderFile } from '../models/OrderFile.js';
 import { PrintJob } from '../models/PrintJob.js';
 import { Payment } from '../models/Payment.js';
 import { AgentDevice } from '../models/AgentDevice.js';
+import { OwnerAlert } from '../models/OwnerAlert.js';
 import crypto from 'crypto';
 import { getOwnerShopOr404 } from '../middleware/authMiddleware.js';
 import { getRazorpayClient } from '../config/razorpay.js';
 import { getShopQueue, getRedisClient } from '../config/redis.js';
 import { emitQueueAndOrderStatus } from '../services/orderQueueService.js';
+import { recordOrderEvent } from '../services/orderEventService.js';
 
 /**
  * Generates URL-friendly slug from name with unique suffix if needed
@@ -545,6 +547,11 @@ export async function cancelOrder(req, res, next) {
     }
     await order.save();
 
+    await recordOrderEvent(order._id, order.orderNumber, `status_${order.status}`, {
+      refundId,
+      cancelledBy: req.user._id,
+    });
+
     // Decrement Redis queue counter if was queued
     if (wasQueued) {
       try {
@@ -613,6 +620,10 @@ export async function retryOrder(req, res, next) {
 
     order.status = 'queued';
     await order.save();
+
+    await recordOrderEvent(order._id, order.orderNumber, 'status_retry_queued', {
+      retriedBy: req.user._id,
+    });
 
     // Add back to BullMQ
     try {
@@ -683,6 +694,300 @@ export async function createAgentToken(req, res, next) {
         printerStatus: agentDevice.printerStatus,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get alerts for an owner shop.
+ */
+export async function getShopAlerts(req, res, next) {
+  try {
+    const shop = await getOwnerShopOr404(req.params.id, req.user._id);
+    const alerts = await OwnerAlert.find({ shop: shop._id })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      alerts: alerts.map((a) => ({
+        id: a._id,
+        type: a.type,
+        message: a.message,
+        orderNumber: a.orderNumber,
+        readAt: a.readAt,
+        createdAt: a.createdAt,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Mark a shop alert as read.
+ */
+export async function markAlertAsRead(req, res, next) {
+  try {
+    const shop = await getOwnerShopOr404(req.params.id, req.user._id);
+    const { alertId } = req.params;
+
+    const alert = await OwnerAlert.findOneAndUpdate(
+      { _id: alertId, shop: shop._id },
+      { $set: { readAt: new Date() } },
+      { new: true }
+    );
+
+    if (!alert) {
+      return res.status(404).json({ success: false, message: 'Alert not found for this shop.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Alert marked as read.',
+      alert: {
+        id: alert._id,
+        readAt: alert.readAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get shop analytics (orders count, revenue, refunds, turnaround, failure rate, and daily chart series).
+ */
+export async function getShopAnalytics(req, res, next) {
+  try {
+    const shop = await getOwnerShopOr404(req.params.id, req.user._id);
+    const { from, to } = req.query;
+
+    const toDate = to ? new Date(to) : new Date();
+    if (!to) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+    const fromDate = from
+      ? new Date(from)
+      : new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+    if (!from) {
+      fromDate.setHours(0, 0, 0, 0);
+    }
+
+    // Aggregation pipeline to compute summary stats
+    const pipeline = [
+      {
+        $match: {
+          shop: shop._id,
+          createdAt: { $gte: fromDate, $lte: toDate },
+        },
+      },
+      {
+        $facet: {
+          summary: [
+            {
+              $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+                revenue: {
+                  $sum: {
+                    $cond: [
+                      { $in: ['$status', ['queued', 'claimed', 'printing', 'completed']] },
+                      '$totalAmount',
+                      0,
+                    ],
+                  },
+                },
+                refundsTotal: {
+                  $sum: {
+                    $cond: [{ $eq: ['$status', 'refunded'] }, '$totalAmount', 0],
+                  },
+                },
+                completedCount: {
+                  $sum: {
+                    $cond: [{ $eq: ['$status', 'completed'] }, 1, 0],
+                  },
+                },
+                failedCount: {
+                  $sum: {
+                    $cond: [{ $eq: ['$status', 'failed'] }, 1, 0],
+                  },
+                },
+                totalTurnaroundSeconds: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ['$status', 'completed'] },
+                          { $ne: ['$paidAt', null] },
+                          { $ne: ['$completedAt', null] },
+                        ],
+                      },
+                      {
+                        $divide: [{ $subtract: ['$completedAt', '$paidAt'] }, 1000],
+                      },
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+          dailySeries: [
+            {
+              $group: {
+                _id: {
+                  $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+                },
+                orders: { $sum: 1 },
+                revenue: {
+                  $sum: {
+                    $cond: [
+                      { $in: ['$status', ['queued', 'claimed', 'printing', 'completed']] },
+                      '$totalAmount',
+                      0,
+                    ],
+                  },
+                },
+                failed: {
+                  $sum: {
+                    $cond: [{ $eq: ['$status', 'failed'] }, 1, 0],
+                  },
+                },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await Order.aggregate(pipeline);
+    const summary = result?.summary?.[0] || {
+      totalOrders: 0,
+      revenue: 0,
+      refundsTotal: 0,
+      completedCount: 0,
+      failedCount: 0,
+      totalTurnaroundSeconds: 0,
+    };
+
+    const completed = summary.completedCount || 0;
+    const failed = summary.failedCount || 0;
+    const failureRate = completed + failed > 0 ? failed / (completed + failed) : 0;
+    const avgTurnaround = completed > 0 ? Math.round(summary.totalTurnaroundSeconds / completed) : 0;
+
+    const formatSeconds = (sec) => {
+      if (!sec) return '0s';
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    };
+
+    const series = (result?.dailySeries || []).map((d) => ({
+      date: d._id,
+      orders: d.orders,
+      revenue: d.revenue,
+      failed: d.failed,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      totalOrders: summary.totalOrders || 0,
+      revenue: summary.revenue || 0,
+      refundsTotal: summary.refundsTotal || 0,
+      averageTurnaroundSeconds: avgTurnaround,
+      averageTurnaroundFormatted: formatSeconds(avgTurnaround),
+      failureRate: Math.round(failureRate * 1000) / 1000,
+      dailySeries: series,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Helper to escape CSV injection vectors: =, +, -, @
+ */
+function sanitizeCsvCell(value) {
+  if (value === null || value === undefined) return '';
+  let str = String(value);
+  if (/^[=+\-@]/.test(str)) {
+    str = `'${str}`;
+  }
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    str = `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * Export shop orders as CSV with CSV-injection protection.
+ */
+export async function exportOrdersCsv(req, res, next) {
+  try {
+    const shop = await getOwnerShopOr404(req.params.id, req.user._id);
+    const { from, to } = req.query;
+
+    const query = { shop: shop._id };
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) {
+        const toD = new Date(to);
+        toD.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = toD;
+      }
+    }
+
+    const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
+
+    const headers = [
+      'orderNumber',
+      'paidAt',
+      'status',
+      'pages',
+      'copies',
+      'colorMode',
+      'sides',
+      'totalAmount',
+      'refundedAmount',
+    ];
+
+    const rows = [headers.join(',')];
+
+    for (const o of orders) {
+      const isRefunded = o.status === 'refunded';
+      const refundedAmount = isRefunded ? o.totalAmount : 0;
+      const pages = o.breakdown?.effectivePages || 1;
+      const copies = o.options?.copies || 1;
+      const colorMode = o.options?.colorMode || 'bw';
+      const sides = o.options?.sides || 'single';
+
+      const row = [
+        sanitizeCsvCell(o.orderNumber),
+        sanitizeCsvCell(o.paidAt ? new Date(o.paidAt).toISOString() : ''),
+        sanitizeCsvCell(o.status),
+        sanitizeCsvCell(pages),
+        sanitizeCsvCell(copies),
+        sanitizeCsvCell(colorMode),
+        sanitizeCsvCell(sides),
+        sanitizeCsvCell(o.totalAmount),
+        sanitizeCsvCell(refundedAmount),
+      ];
+      rows.push(row.join(','));
+    }
+
+    const csvData = rows.join('\r\n');
+    const filename = `orders-${shop.slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.status(200).send(csvData);
   } catch (err) {
     next(err);
   }

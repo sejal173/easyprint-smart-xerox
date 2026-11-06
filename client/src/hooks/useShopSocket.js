@@ -8,8 +8,9 @@ import socket from '../services/socket';
  * @param {Object} handlers
  * @param {Function} [handlers.onQueueUpdated]
  * @param {Function} [handlers.onShopStatus]
+ * @param {Function} [handlers.onOwnerAlert]
  */
-export function useShopSocket(shopId, { onQueueUpdated, onShopStatus } = {}) {
+export function useShopSocket(shopId, { onQueueUpdated, onShopStatus, onOwnerAlert } = {}) {
   useEffect(() => {
     if (!shopId) return;
 
@@ -28,14 +29,22 @@ export function useShopSocket(shopId, { onQueueUpdated, onShopStatus } = {}) {
       }
     };
 
+    const handleOwnerAlert = (data) => {
+      if (onOwnerAlert) {
+        onOwnerAlert(data);
+      }
+    };
+
     socket.on('queue.updated', handleQueueUpdated);
     socket.on('shop.status', handleShopStatus);
+    socket.on('owner.alert', handleOwnerAlert);
 
     return () => {
       socket.off('queue.updated', handleQueueUpdated);
       socket.off('shop.status', handleShopStatus);
+      socket.off('owner.alert', handleOwnerAlert);
     };
-  }, [shopId, onQueueUpdated, onShopStatus]);
+  }, [shopId, onQueueUpdated, onShopStatus, onOwnerAlert]);
 }
 
 export default useShopSocket;

@@ -136,5 +136,72 @@ export const createDraftOrder = async ({ shopSlug, customerPhone, fileIds, optio
   return response.data;
 };
 
+// Payments API
+export const createPaymentOrder = async (orderNumber) => {
+  const res = await api.post('/payments/orders', { orderNumber });
+  return res.data;
+};
+
+export const verifyPayment = async (data) => {
+  const res = await api.post('/payments/verify', data);
+  return res.data;
+};
+
+// Owner Alerts API
+export const fetchShopAlerts = async (shopId) => {
+  const res = await api.get(`/owner/shops/${shopId}/alerts`);
+  return res.data;
+};
+
+export const markAlertRead = async (shopId, alertId) => {
+  const res = await api.patch(`/owner/shops/${shopId}/alerts/${alertId}/read`);
+  return res.data;
+};
+
+// Owner Analytics API
+export const fetchShopAnalytics = async (shopId, from, to) => {
+  const params = {};
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const res = await api.get(`/owner/shops/${shopId}/analytics`, { params });
+  return res.data;
+};
+
+// Admin API
+export const fetchAdminShops = async (params) => {
+  const res = await api.get('/admin/shops', { params });
+  return res.data;
+};
+
+export const updateAdminShopStatus = async (shopId, status) => {
+  const res = await api.patch(`/admin/shops/${shopId}/status`, { status });
+  return res.data;
+};
+
+export const fetchAdminOrders = async (params) => {
+  const res = await api.get('/admin/orders', { params });
+  return res.data;
+};
+
+export const fetchAdminOrderByNumber = async (orderNumber) => {
+  const res = await api.get(`/admin/orders/${orderNumber}`);
+  return res.data;
+};
+
+export const fetchAdminPayments = async (params) => {
+  const res = await api.get('/admin/payments', { params });
+  return res.data;
+};
+
+export const fetchAdminUsers = async (params) => {
+  const res = await api.get('/admin/users', { params });
+  return res.data;
+};
+
+export const updateAdminUser = async (userId, data) => {
+  const res = await api.patch(`/admin/users/${userId}`, data);
+  return res.data;
+};
+
 export default api;
 

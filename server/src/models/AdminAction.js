@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const adminActionSchema = new mongoose.Schema(
   {
-    user: {
+    adminId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
@@ -19,12 +19,21 @@ const adminActionSchema = new mongoose.Schema(
       trim: true,
     },
     targetId: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: String,
+      required: true,
+    },
+    before: {
+      type: mongoose.Schema.Types.Mixed,
       default: null,
     },
-    details: {
+    after: {
       type: mongoose.Schema.Types.Mixed,
-      default: {},
+      default: null,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
     },
   },
   {
@@ -32,6 +41,10 @@ const adminActionSchema = new mongoose.Schema(
   }
 );
 
+// Virtual alias for backward compatibility with user field
+adminActionSchema.virtual('user').get(function () {
+  return this.adminId;
+});
+
 export const AdminAction = mongoose.model('AdminAction', adminActionSchema);
 export default AdminAction;
-

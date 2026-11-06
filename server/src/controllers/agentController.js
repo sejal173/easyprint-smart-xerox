@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { PrintJob, Order, OrderFile, AgentDevice } from '../models/index.js';
+import { PrintJob, Order, OrderFile, AgentDevice, OwnerAlert } from '../models/index.js';
 import { ALLOWED_JOB_TRANSITIONS } from '@easyprint/shared';
 import { getSignedDownloadUrl, getFileStream, verifySignedDownloadToken } from '../config/storage.js';
 import { getRedisClient } from '../config/redis.js';
 import { emitQueueAndOrderStatus } from '../services/orderQueueService.js';
+import { recordOrderEvent } from '../services/orderEventService.js';
 
 const heartbeatSchema = z.object({
   printerStatus: z.enum(['ready', 'offline', 'error']).default('ready'),
@@ -106,6 +107,29 @@ export async function agentHeartbeat(req, res, next) {
         agentVersion: req.agent.agentVersion,
         lastHeartbeatAt: req.agent.lastHeartbeatAt,
       });
+
+      if (req.agent.printerStatus === 'error' || req.agent.printerStatus === 'offline' || req.agent.printerError) {
+        const isPaperOut = req.agent.printerError?.toLowerCase().includes('paper');
+        const alertType = isPaperOut
+          ? 'paper_out'
+          : req.agent.printerStatus === 'offline'
+          ? 'printer_offline'
+          : 'printer_error';
+
+        const alert = await OwnerAlert.create({
+          shop: req.shop,
+          type: alertType,
+          message: req.agent.printerError || `Printer reported status: ${req.agent.printerStatus}`,
+        });
+
+        io.to(`shop:${req.shop}`).emit('owner.alert', {
+          id: alert._id,
+          type: alert.type,
+          message: alert.message,
+          orderNumber: null,
+          createdAt: alert.createdAt,
+        });
+      }
     }
 
     return res.status(200).json({
@@ -254,6 +278,10 @@ export async function updateJobStatus(req, res, next) {
         job.order.printingStartedAt = new Date();
         await job.order.save();
 
+        await recordOrderEvent(job.order._id, job.order.orderNumber, 'status_printing', {
+          spoolerJobId,
+        });
+
         if (io) {
           io.to(`order:${job.order.orderNumber}`).emit('order.status', {
             orderNumber: job.order.orderNumber,
@@ -281,12 +309,30 @@ export async function updateJobStatus(req, res, next) {
         job.order.status = 'completed';
         await job.order.save();
 
+        await recordOrderEvent(job.order._id, job.order.orderNumber, 'status_completed', {
+          sheetCount: totalSheets,
+          printDurationSeconds: durationSeconds,
+        });
+
         try {
           const redis = getRedisClient();
           await redis.decr(`shop:${job.shop}:active_count`);
         } catch {}
 
         if (io) {
+          // Emit order.completed carrying queueNumber for customer completion modal
+          io.to(`order:${job.order.orderNumber}`).emit('order.completed', {
+            orderNumber: job.order.orderNumber,
+            queueNumber: job.order.queueNumber,
+            status: 'completed',
+            completedAt: job.order.completedAt,
+          });
+          io.to(`shop:${job.shop}`).emit('order.completed', {
+            orderNumber: job.order.orderNumber,
+            queueNumber: job.order.queueNumber,
+            status: 'completed',
+            completedAt: job.order.completedAt,
+          });
           await emitQueueAndOrderStatus(job.shop.toString(), job.order, io);
         }
       }
@@ -299,12 +345,32 @@ export async function updateJobStatus(req, res, next) {
         job.order.status = 'failed';
         await job.order.save();
 
+        await recordOrderEvent(job.order._id, job.order.orderNumber, 'status_failed', {
+          errorMessage: job.errorMessage,
+        });
+
         try {
           const redis = getRedisClient();
           await redis.decr(`shop:${job.shop}:active_count`);
         } catch {}
 
+        // Create persistent OwnerAlert record for failed print job
+        const alert = await OwnerAlert.create({
+          shop: job.shop,
+          type: 'job_failed',
+          message: `Job ${job.order.orderNumber} failed: ${job.errorMessage}`,
+          orderNumber: job.order.orderNumber,
+        });
+
         if (io) {
+          io.to(`shop:${job.shop}`).emit('owner.alert', {
+            id: alert._id,
+            type: alert.type,
+            message: alert.message,
+            orderNumber: alert.orderNumber,
+            createdAt: alert.createdAt,
+          });
+
           io.to(`order:${job.order.orderNumber}`).emit('order.status', {
             orderNumber: job.order.orderNumber,
             status: 'failed',
@@ -355,6 +421,13 @@ export async function getJobFile(req, res, next) {
     }
 
     const file = files[0];
+    if (file.deletedAt) {
+      return res.status(410).json({
+        success: false,
+        message: 'File has expired and been deleted under retention policy',
+      });
+    }
+
     const stream = await getFileStream(file.storageKey);
 
     res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
@@ -381,10 +454,25 @@ export async function downloadSignedFile(req, res, next) {
       return res.status(403).json({ success: false, message: 'Signed URL has expired or signature is invalid' });
     }
 
+    // Check file retention status
+    const fileRecord = await OrderFile.findOne({ storageKey: key });
+    if (fileRecord && fileRecord.deletedAt) {
+      return res.status(410).json({
+        success: false,
+        message: 'File has expired and been deleted under retention policy',
+      });
+    }
+
     const stream = await getFileStream(key);
     res.setHeader('Content-Type', 'application/octet-stream');
     return stream.pipe(res);
   } catch (err) {
+    if (err.code === 'ENOENT' || err.statusCode === 404) {
+      return res.status(410).json({
+        success: false,
+        message: 'File has expired and been deleted under retention policy',
+      });
+    }
     next(err);
   }
 }
