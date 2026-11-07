@@ -84,6 +84,10 @@ test.before(async () => {
   ownerCookie = `token=${token}`;
 
   testShop = await Shop.findOne({ slug: 'quickcopy-central' });
+  if (testShop && owner) {
+    testShop.owner = owner._id;
+    await testShop.save();
+  }
 });
 
 test.after(async () => {

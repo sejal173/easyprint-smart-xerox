@@ -196,7 +196,13 @@ Executes an end-to-end transaction against live services:
 node scripts/smoke/smoke-test.js
 ```
 
-### 4. Run Automated Test Suites
+### 4. Run Razorpay Webhook Simulation
+Tests payment capture, idempotency, and failure transitions without real cards:
+```bash
+node scripts/test-webhook.js
+```
+
+### 5. Run Automated Test Suites
 Run the full 100-test suite across the monorepo:
 ```bash
 # 1. Shared Engine Tests (9 tests)

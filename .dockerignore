@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+.gitignore
+.env
+.env.docker
+server/.env
+client/.env
+windows-agent/
+server/.data
+server/.redis
+docs/
+

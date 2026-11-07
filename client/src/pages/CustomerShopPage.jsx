@@ -80,14 +80,14 @@ export default function CustomerShopPage() {
         setShop((prev) =>
           prev
             ? {
-                ...prev,
-                isOnline: data.isOnline,
-                availability: data.isOnline
-                  ? prev.queueLength >= 10
-                    ? 'BUSY'
-                    : 'ONLINE'
-                  : 'OFFLINE',
-              }
+              ...prev,
+              isOnline: data.isOnline,
+              availability: data.isOnline
+                ? prev.queueLength >= 10
+                  ? 'BUSY'
+                  : 'ONLINE'
+                : 'OFFLINE',
+            }
             : prev
         );
       } else {

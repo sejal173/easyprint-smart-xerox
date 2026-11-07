@@ -69,8 +69,21 @@ export const envSchema = z
       .union([z.string(), z.number()])
       .default(300)
       .transform((val) => Number(val)),
+    ALLOW_DEV_PAYMENT_SIMULATION: z
+      .union([z.string(), z.boolean()])
+      .default(false)
+      .transform((val) => val === true || val === 'true'),
   })
   .superRefine((data, ctx) => {
+    // In production, reject dev simulation flag
+    if (data.NODE_ENV === 'production' && data.ALLOW_DEV_PAYMENT_SIMULATION) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ALLOW_DEV_PAYMENT_SIMULATION'],
+        message: 'ALLOW_DEV_PAYMENT_SIMULATION cannot be enabled in production mode.',
+      });
+    }
+
     // In production, reject default/weak secrets
     if (data.NODE_ENV === 'production') {
       if (!data.JWT_SECRET || DEFAULT_SECRETS.includes(data.JWT_SECRET.trim())) {

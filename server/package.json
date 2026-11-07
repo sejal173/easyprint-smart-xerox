@@ -9,7 +9,7 @@
     "dev:worker": "node --watch src/worker.js",
     "start:worker": "node src/worker.js",
     "seed": "node src/scripts/seed.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.565.0",

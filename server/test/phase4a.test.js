@@ -546,6 +546,9 @@ test("9. Retention: Completed order's file bytes deleted, signed URL returns 410
 
 // TEST 10: Dev mark-paid returns 403 when RAZORPAY_KEY_ID is set or NODE_ENV === 'production'
 test('10. Dev mark-paid returns 403 when RAZORPAY_KEY_ID is set or NODE_ENV === production', async () => {
+  const origSim = process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+  process.env.ALLOW_DEV_PAYMENT_SIMULATION = 'true';
+
   // Test case A: RAZORPAY_KEY_ID is set
   process.env.RAZORPAY_KEY_ID = 'rzp_live_test_key_123';
   const resWithRzpKey = await fetch(`${baseUrl}/api/dev/orders/EP-P4A-DEV1/mark-paid`, {
@@ -563,6 +566,12 @@ test('10. Dev mark-paid returns 403 when RAZORPAY_KEY_ID is set or NODE_ENV === 
   });
   assert.equal(resInProd.status, 403);
   process.env.NODE_ENV = 'test';
+
+  if (origSim !== undefined) {
+    process.env.ALLOW_DEV_PAYMENT_SIMULATION = origSim;
+  } else {
+    delete process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+  }
 });
 
 // TEST 11: CORS refuses unlisted origin

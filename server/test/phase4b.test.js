@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 
-import { app } from '../src/server.js';
+import { app, validateProductionSecrets } from '../src/server.js';
 import { connectDB } from '../src/config/db.js';
 import { getRedisClient, closeRedis } from '../src/config/redis.js';
 import { User, Shop } from '../src/models/index.js';
@@ -346,4 +346,118 @@ test('5.1: docker compose config validates syntax and structure (or documents NO
   });
 
   assert.equal(configResult.status, 0, `docker compose config failed: ${configResult.stderr}`);
+});
+
+// =========================================================================
+// 6. PAYMENT SIMULATION GUARDS
+// =========================================================================
+
+test('6.1: validateEnv throws error if ALLOW_DEV_PAYMENT_SIMULATION is true in production mode', () => {
+  assert.throws(
+    () => {
+      validateEnv({
+        NODE_ENV: 'production',
+        MONGODB_URI: 'mongodb://127.0.0.1:27017/easyprint',
+        REDIS_URL: 'redis://127.0.0.1:6379',
+        JWT_SECRET: 'secure_custom_production_jwt_secret_key_123456789',
+        ALLOW_DEV_PAYMENT_SIMULATION: true,
+      });
+    },
+    (err) => {
+      assert.match(err.message, /ALLOW_DEV_PAYMENT_SIMULATION/);
+      return true;
+    }
+  );
+});
+
+test('6.2: validateProductionSecrets throws error if ALLOW_DEV_PAYMENT_SIMULATION is enabled in production', () => {
+  const origEnv = process.env.NODE_ENV;
+  const origSim = process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+  const origJwt = process.env.JWT_SECRET;
+
+  try {
+    process.env.NODE_ENV = 'production';
+    process.env.JWT_SECRET = 'valid_production_secret_key_long_enough';
+    process.env.RAZORPAY_KEY_SECRET = 'valid_production_rzp_secret_key';
+    process.env.RAZORPAY_WEBHOOK_SECRET = 'valid_production_rzp_webhook_secret';
+    process.env.ALLOW_DEV_PAYMENT_SIMULATION = 'true';
+
+    assert.throws(
+      () => {
+        validateProductionSecrets();
+      },
+      (err) => {
+        assert.match(err.message, /Refusing to boot in production with ALLOW_DEV_PAYMENT_SIMULATION=true/);
+        return true;
+      }
+    );
+  } finally {
+    process.env.NODE_ENV = origEnv;
+    process.env.ALLOW_DEV_PAYMENT_SIMULATION = origSim;
+    process.env.JWT_SECRET = origJwt;
+  }
+});
+
+test('6.3: POST /api/dev/orders/:orderNumber/mark-paid returns 403 when RAZORPAY_KEY_ID is set (e.g. placeholder)', async () => {
+  const origKey = process.env.RAZORPAY_KEY_ID;
+  const origSim = process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+
+  try {
+    process.env.ALLOW_DEV_PAYMENT_SIMULATION = 'true';
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_placeholder';
+
+    const res = await fetch(`${baseUrl}/api/dev/orders/ORD-TEST-DUMMY/mark-paid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(res.status, 403, 'Should return HTTP 403 Forbidden when RAZORPAY_KEY_ID is configured');
+    const body = await res.json();
+    assert.equal(body.success, false);
+    assert.match(body.message, /disabled/);
+  } finally {
+    if (origKey !== undefined) {
+      process.env.RAZORPAY_KEY_ID = origKey;
+    } else {
+      delete process.env.RAZORPAY_KEY_ID;
+    }
+    if (origSim !== undefined) {
+      process.env.ALLOW_DEV_PAYMENT_SIMULATION = origSim;
+    } else {
+      delete process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+    }
+  }
+});
+
+test('6.4: POST /api/dev/orders/:orderNumber/mark-paid returns 403 when ALLOW_DEV_PAYMENT_SIMULATION is false/unset', async () => {
+  const origKey = process.env.RAZORPAY_KEY_ID;
+  const origSim = process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+
+  try {
+    delete process.env.RAZORPAY_KEY_ID;
+    process.env.ALLOW_DEV_PAYMENT_SIMULATION = 'false';
+
+    const res = await fetch(`${baseUrl}/api/dev/orders/ORD-TEST-DUMMY/mark-paid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(res.status, 403, 'Should return HTTP 403 Forbidden when ALLOW_DEV_PAYMENT_SIMULATION is false');
+    const body = await res.json();
+    assert.equal(body.success, false);
+    assert.match(body.message, /disabled/);
+  } finally {
+    if (origKey !== undefined) {
+      process.env.RAZORPAY_KEY_ID = origKey;
+    } else {
+      delete process.env.RAZORPAY_KEY_ID;
+    }
+    if (origSim !== undefined) {
+      process.env.ALLOW_DEV_PAYMENT_SIMULATION = origSim;
+    } else {
+      delete process.env.ALLOW_DEV_PAYMENT_SIMULATION;
+    }
+  }
 });

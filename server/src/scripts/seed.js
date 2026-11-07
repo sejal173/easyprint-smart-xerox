@@ -99,6 +99,11 @@ export async function seedOwnerUser() {
     });
     console.log(`[Seed] Generated QR Code for: ${publicUrl}`);
   } else {
+    if (String(shop.owner) !== String(owner._id)) {
+      shop.owner = owner._id;
+      await shop.save();
+      console.log(`[Seed] Synchronized shop owner link to user: ${owner.email}`);
+    }
     console.log(`[Seed] Shop "${shop.name}" already exists.`);
   }
 

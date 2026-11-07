@@ -101,6 +101,10 @@ io.on('connection', (socket) => {
 // Secrets validation for production boot
 export function validateProductionSecrets() {
   if (process.env.NODE_ENV === 'production') {
+    if (process.env.ALLOW_DEV_PAYMENT_SIMULATION === 'true' || process.env.ALLOW_DEV_PAYMENT_SIMULATION === true) {
+      throw new Error('[Startup Fatal] Refusing to boot in production with ALLOW_DEV_PAYMENT_SIMULATION=true.');
+    }
+
     const defaultSecrets = [
       'easyprint_super_secret_jwt_key_2026',
       'easyprint_secure_storage_secret',

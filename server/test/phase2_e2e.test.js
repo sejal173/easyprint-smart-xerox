@@ -1,4 +1,6 @@
 process.env.NODE_ENV = 'test';
+process.env.ALLOW_DEV_PAYMENT_SIMULATION = 'true';
+delete process.env.RAZORPAY_KEY_ID;
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -276,16 +278,17 @@ test('4. Numbers reset: orders paid on a new date start at 1 again', async () =>
   const redis = getRedisClient();
   await redis.set(`shop:${shop1Id}:active_count`, 50);
 
-  // Mark paid with tomorrow's date: '2026-11-07'
+  // Mark paid with tomorrow's date
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
   const res = await fetch(`${baseUrl}/api/dev/orders/${tomorrowOrder.orderNumber}/mark-paid`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customDate: '2026-11-07' }),
+    body: JSON.stringify({ customDate: tomorrow }),
   });
 
   assert.equal(res.status, 200);
   const data = await res.json();
-  assert.equal(data.order.queueDate, '2026-11-07');
+  assert.equal(data.order.queueDate, tomorrow);
   assert.equal(data.order.queueNumber, 1, 'Queue number must reset to 1 on a new date');
 });
 

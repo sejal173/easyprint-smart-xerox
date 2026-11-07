@@ -5,10 +5,15 @@ import { markOrderPaid } from '../services/orderQueueService.js';
  */
 export async function devMarkOrderPaid(req, res, next) {
   try {
-    if (process.env.RAZORPAY_KEY_ID || process.env.NODE_ENV === 'production') {
+    if (
+      process.env.ALLOW_DEV_PAYMENT_SIMULATION !== 'true' ||
+      process.env.NODE_ENV === 'production' ||
+      Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_ID.trim())
+    ) {
       return res.status(403).json({
         success: false,
-        message: 'Dev mark-paid endpoint is disabled when RAZORPAY_KEY_ID is configured or in production.',
+        message:
+          'Dev mark-paid endpoint is disabled when RAZORPAY_KEY_ID is configured, in production, or when ALLOW_DEV_PAYMENT_SIMULATION is not true.',
       });
     }
 
